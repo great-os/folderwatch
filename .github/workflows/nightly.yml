@@ -1,0 +1,74 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-windres
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p obj
+          windres -O coff src/app.rc obj/app_res.o
+          gcc -Os -flto -municode -mwindows \
+            -ffunction-sections -fdata-sections \
+            -fno-asynchronous-unwind-tables -fno-ident \
+            -fno-stack-protector -mno-stack-arg-probe \
+            -fno-exceptions -Wall -DUNICODE -D_UNICODE -Isrc \
+            src/ui.c src/etw.c src/fmap.c src/util.c obj/app_res.o \
+            -o folderwatch.exe \
+            -Wl,--gc-sections -Wl,--no-insert-timestamp -s -static \
+            -lkernel32 -luser32 -lshell32 -lole32 -ladvapi32 -lcomctl32
+          ls -la folderwatch.exe
+
+      - name: Collect artifact
+        shell: cmd
+        run: |
+          if not exist dist mkdir dist
+          copy /Y folderwatch.exe dist\folderwatch.exe
+          if exist README.md copy /Y README.md dist\README.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: folderwatch-nightly
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly
+          body: |
+            Automated nightly build of FolderWatch.
+            Download `folderwatch.exe` (run as Administrator).
+          prerelease: true
+          make_latest: false
+          files: |
+            dist/folderwatch.exe
+            dist/README.md
